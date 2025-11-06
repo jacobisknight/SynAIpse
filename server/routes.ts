@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema } from "@shared/schema";
+import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema, insertWorkflowSchema } from "@shared/schema";
 import { z } from "zod";
 import { decomposeTask, generateAgentPersona, executeAgentTask } from "./ai-service";
 
@@ -374,6 +374,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Workflow endpoints
+  app.get("/api/workflows", async (req, res) => {
+    try {
+      const workflows = await storage.getWorkflows("demo-org");
+      res.json(workflows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/workflows/:id", async (req, res) => {
+    try {
+      const workflow = await storage.getWorkflow(req.params.id);
+      if (!workflow) {
+        return res.status(404).json({ error: "Workflow not found" });
+      }
+      res.json(workflow);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/workflows", async (req, res) => {
+    try {
+      const validated = insertWorkflowSchema.parse(req.body);
+      const workflow = await storage.createWorkflow(validated);
+      
+      broadcast({ type: "workflow_created", data: workflow });
+      
+      res.status(201).json(workflow);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/workflows/:id", async (req, res) => {
+    try {
+      const workflow = await storage.updateWorkflow(req.params.id, req.body);
+      if (!workflow) {
+        return res.status(404).json({ error: "Workflow not found" });
+      }
+      
+      broadcast({ type: "workflow_updated", data: workflow });
+      
+      res.json(workflow);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/workflows/:id", async (req, res) => {
+    try {
+      await storage.deleteWorkflow(req.params.id);
+      
+      broadcast({ type: "workflow_deleted", data: { id: req.params.id } });
+      
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/execute", async (req, res) => {
+    try {
+      const workflow = await storage.getWorkflow(req.params.id);
+      if (!workflow) {
+        return res.status(404).json({ error: "Workflow not found" });
+      }
+
+      await storage.updateWorkflow(workflow.id, { status: "active" });
+      
+      broadcast({ type: "workflow_executed", data: { workflowId: workflow.id } });
+
+      res.json({ 
+        success: true, 
+        message: `Workflow "${workflow.name}" execution started`,
+        workflow 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

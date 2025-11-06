@@ -132,11 +132,40 @@ export const insertActivitySchema = createInsertSchema(activity).omit({
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
 export type Activity = typeof activity.$inferSelect;
 
+// Workflows table
+export const workflowStatusEnum = z.enum(["draft", "active", "paused", "archived"]);
+
+export const workflows = pgTable("workflows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id),
+  agentId: varchar("agent_id").references(() => agents.id, { onDelete: 'set null' }),
+  name: text("name").notNull(),
+  description: text("description"),
+  nodes: jsonb("nodes"),
+  edges: jsonb("edges"),
+  status: text("status").notNull().default("draft"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertWorkflowSchema = createInsertSchema(workflows).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  nodes: z.array(z.any()).optional(),
+  edges: z.array(z.any()).optional(),
+});
+
+export type InsertWorkflow = z.infer<typeof insertWorkflowSchema>;
+export type Workflow = typeof workflows.$inferSelect;
+
 // Relations
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   agents: many(agents),
   integrations: many(integrations),
   activities: many(activity),
+  workflows: many(workflows),
 }));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
@@ -189,5 +218,16 @@ export const activityRelations = relations(activity, ({ one }) => ({
   organization: one(organizations, {
     fields: [activity.organizationId],
     references: [organizations.id],
+  }),
+}));
+
+export const workflowsRelations = relations(workflows, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [workflows.organizationId],
+    references: [organizations.id],
+  }),
+  agent: one(agents, {
+    fields: [workflows.agentId],
+    references: [agents.id],
   }),
 }));

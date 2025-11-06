@@ -11,12 +11,15 @@ import {
   type InsertAgentMetrics,
   type Activity,
   type InsertActivity,
+  type Workflow,
+  type InsertWorkflow,
   organizations,
   agents,
   tasks,
   integrations,
   agentMetrics,
   activity,
+  workflows,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
@@ -60,12 +63,20 @@ export interface IStorage {
 
   // Activity
   getRecentActivity(organizationId: string, limit?: number): Promise<any[]>;
+
+  // Workflows
+  getWorkflow(id: string): Promise<Workflow | undefined>;
+  getWorkflows(organizationId?: string): Promise<Workflow[]>;
+  createWorkflow(workflow: InsertWorkflow): Promise<Workflow>;
+  updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow | undefined>;
+  deleteWorkflow(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
   constructor() {
     this.initDemoOrganization();
     this.initDemoIntegrations();
+    this.initWorkflowTemplates();
   }
 
   private async initDemoOrganization() {
@@ -129,6 +140,126 @@ export class DatabaseStorage implements IStorage {
       }
     } catch (error) {
       console.error("Error initializing demo integrations:", error);
+    }
+  }
+
+  private async initWorkflowTemplates() {
+    try {
+      const existing = await db.select().from(workflows).where(eq(workflows.organizationId, "demo-org")).limit(1);
+      if (existing.length === 0) {
+        const workflowTemplates = [
+          {
+            organizationId: "demo-org",
+            name: "Customer Onboarding",
+            description: "Multi-step automated customer onboarding process",
+            status: "draft",
+            nodes: [
+              { id: "1", type: "start", position: { x: 100, y: 100 }, data: { label: "Start Onboarding" } },
+              { id: "2", type: "action", position: { x: 100, y: 200 }, data: { label: "Collect Customer Info" } },
+              { id: "3", type: "action", position: { x: 100, y: 300 }, data: { label: "Create Account" } },
+              { id: "4", type: "action", position: { x: 100, y: 400 }, data: { label: "Send Welcome Email" } },
+              { id: "5", type: "end", position: { x: 100, y: 500 }, data: { label: "Onboarding Complete" } },
+            ],
+            edges: [
+              { id: "e1-2", source: "1", target: "2" },
+              { id: "e2-3", source: "2", target: "3" },
+              { id: "e3-4", source: "3", target: "4" },
+              { id: "e4-5", source: "4", target: "5" },
+            ],
+          },
+          {
+            organizationId: "demo-org",
+            name: "Lead Qualification",
+            description: "Automated lead scoring and qualification workflow",
+            status: "draft",
+            nodes: [
+              { id: "1", type: "start", position: { x: 100, y: 100 }, data: { label: "New Lead" } },
+              { id: "2", type: "action", position: { x: 100, y: 200 }, data: { label: "Score Lead" } },
+              { id: "3", type: "decision", position: { x: 100, y: 300 }, data: { label: "Score > 70?" } },
+              { id: "4", type: "action", position: { x: 250, y: 400 }, data: { label: "Assign to Sales" } },
+              { id: "5", type: "action", position: { x: -50, y: 400 }, data: { label: "Send to Nurture" } },
+              { id: "6", type: "end", position: { x: 100, y: 500 }, data: { label: "Complete" } },
+            ],
+            edges: [
+              { id: "e1-2", source: "1", target: "2" },
+              { id: "e2-3", source: "2", target: "3" },
+              { id: "e3-4", source: "3", target: "4", label: "Yes" },
+              { id: "e3-5", source: "3", target: "5", label: "No" },
+              { id: "e4-6", source: "4", target: "6" },
+              { id: "e5-6", source: "5", target: "6" },
+            ],
+          },
+          {
+            organizationId: "demo-org",
+            name: "Support Ticket Routing",
+            description: "Intelligent support ticket assignment workflow",
+            status: "draft",
+            nodes: [
+              { id: "1", type: "start", position: { x: 100, y: 100 }, data: { label: "New Ticket" } },
+              { id: "2", type: "decision", position: { x: 100, y: 200 }, data: { label: "Priority Level" } },
+              { id: "3", type: "action", position: { x: -50, y: 300 }, data: { label: "Route to Tier 1" } },
+              { id: "4", type: "action", position: { x: 100, y: 300 }, data: { label: "Route to Tier 2" } },
+              { id: "5", type: "action", position: { x: 250, y: 300 }, data: { label: "Escalate to Manager" } },
+              { id: "6", type: "end", position: { x: 100, y: 400 }, data: { label: "Ticket Assigned" } },
+            ],
+            edges: [
+              { id: "e1-2", source: "1", target: "2" },
+              { id: "e2-3", source: "2", target: "3", label: "Low" },
+              { id: "e2-4", source: "2", target: "4", label: "Medium" },
+              { id: "e2-5", source: "2", target: "5", label: "High" },
+              { id: "e3-6", source: "3", target: "6" },
+              { id: "e4-6", source: "4", target: "6" },
+              { id: "e5-6", source: "5", target: "6" },
+            ],
+          },
+          {
+            organizationId: "demo-org",
+            name: "Data Sync",
+            description: "Periodic data synchronization between systems",
+            status: "draft",
+            nodes: [
+              { id: "1", type: "start", position: { x: 100, y: 100 }, data: { label: "Scheduled Trigger" } },
+              { id: "2", type: "action", position: { x: 100, y: 200 }, data: { label: "Fetch Source Data" } },
+              { id: "3", type: "action", position: { x: 100, y: 300 }, data: { label: "Transform Data" } },
+              { id: "4", type: "action", position: { x: 100, y: 400 }, data: { label: "Update Target System" } },
+              { id: "5", type: "end", position: { x: 100, y: 500 }, data: { label: "Sync Complete" } },
+            ],
+            edges: [
+              { id: "e1-2", source: "1", target: "2" },
+              { id: "e2-3", source: "2", target: "3" },
+              { id: "e3-4", source: "3", target: "4" },
+              { id: "e4-5", source: "4", target: "5" },
+            ],
+          },
+          {
+            organizationId: "demo-org",
+            name: "Approval Process",
+            description: "Multi-stage approval workflow for requests",
+            status: "draft",
+            nodes: [
+              { id: "1", type: "start", position: { x: 100, y: 100 }, data: { label: "Request Submitted" } },
+              { id: "2", type: "decision", position: { x: 100, y: 200 }, data: { label: "Manager Approval" } },
+              { id: "3", type: "decision", position: { x: 100, y: 350 }, data: { label: "Director Approval" } },
+              { id: "4", type: "action", position: { x: 250, y: 500 }, data: { label: "Execute Request" } },
+              { id: "5", type: "action", position: { x: -50, y: 500 }, data: { label: "Reject Request" } },
+              { id: "6", type: "end", position: { x: 100, y: 600 }, data: { label: "Process Complete" } },
+            ],
+            edges: [
+              { id: "e1-2", source: "1", target: "2" },
+              { id: "e2-3", source: "2", target: "3", label: "Approved" },
+              { id: "e2-5", source: "2", target: "5", label: "Rejected" },
+              { id: "e3-4", source: "3", target: "4", label: "Approved" },
+              { id: "e3-5", source: "3", target: "5", label: "Rejected" },
+              { id: "e4-6", source: "4", target: "6" },
+              { id: "e5-6", source: "5", target: "6" },
+            ],
+          },
+        ];
+
+        await db.insert(workflows).values(workflowTemplates);
+      }
+    } catch (error) {
+      console.error("Error initializing workflow templates:", error);
     }
   }
 
@@ -459,6 +590,79 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error("Error getting recent activity:", error);
       return [];
+    }
+  }
+
+  async getWorkflow(id: string): Promise<Workflow | undefined> {
+    try {
+      const result = await db.select().from(workflows).where(eq(workflows.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting workflow:", error);
+      return undefined;
+    }
+  }
+
+  async getWorkflows(organizationId?: string): Promise<Workflow[]> {
+    try {
+      if (organizationId) {
+        return await db.select().from(workflows).where(eq(workflows.organizationId, organizationId));
+      }
+      return await db.select().from(workflows);
+    } catch (error) {
+      console.error("Error getting workflows:", error);
+      return [];
+    }
+  }
+
+  async createWorkflow(insertWorkflow: InsertWorkflow): Promise<Workflow> {
+    try {
+      const result = await db.insert(workflows).values(insertWorkflow).returning();
+      const workflow = result[0];
+
+      await this.logActivity(workflow.organizationId, `Workflow "${workflow.name}" created`);
+
+      return workflow;
+    } catch (error) {
+      console.error("Error creating workflow:", error);
+      throw error;
+    }
+  }
+
+  async updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow | undefined> {
+    try {
+      const workflow = await this.getWorkflow(id);
+      if (!workflow) return undefined;
+
+      const updatedData = {
+        ...updates,
+        updatedAt: new Date(),
+      };
+
+      const result = await db.update(workflows).set(updatedData).where(eq(workflows.id, id)).returning();
+
+      if (updates.status) {
+        await this.logActivity(workflow.organizationId, `Workflow "${workflow.name}" status changed to ${updates.status}`);
+      }
+
+      return result[0];
+    } catch (error) {
+      console.error("Error updating workflow:", error);
+      return undefined;
+    }
+  }
+
+  async deleteWorkflow(id: string): Promise<void> {
+    try {
+      const workflow = await this.getWorkflow(id);
+      if (!workflow) return;
+
+      await db.delete(workflows).where(eq(workflows.id, id));
+
+      await this.logActivity(workflow.organizationId, `Workflow "${workflow.name}" deleted`);
+    } catch (error) {
+      console.error("Error deleting workflow:", error);
+      throw error;
     }
   }
 }
