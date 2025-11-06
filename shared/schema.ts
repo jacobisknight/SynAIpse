@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, jsonb, boolean, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -25,8 +25,8 @@ export const agentStatusEnum = z.enum(["active", "idle", "processing", "error", 
 // Agents
 export const agents = pgTable("agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id").notNull(),
-  parentAgentId: varchar("parent_agent_id"), // For sub-agents
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id),
+  parentAgentId: varchar("parent_agent_id").references((): any => agents.id, { onDelete: 'cascade' }), // For sub-agents
   name: text("name").notNull(),
   type: text("type").notNull(), // voice, workflow, data
   status: text("status").notNull().default("idle"), // active, idle, processing, error, stopped
@@ -57,8 +57,8 @@ export const taskStatusEnum = z.enum(["pending", "in_progress", "completed", "fa
 
 export const tasks = pgTable("tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  agentId: varchar("agent_id").notNull(),
-  parentTaskId: varchar("parent_task_id"), // For sub-tasks
+  agentId: varchar("agent_id").notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  parentTaskId: varchar("parent_task_id").references((): any => tasks.id, { onDelete: 'cascade' }), // For sub-tasks
   title: text("title").notNull(),
   description: text("description"),
   status: text("status").notNull().default("pending"),
@@ -79,7 +79,7 @@ export type Task = typeof tasks.$inferSelect;
 // Integrations
 export const integrations = pgTable("integrations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id").notNull(),
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id),
   name: text("name").notNull(), // Salesforce, SAP, ServiceNow, etc.
   type: text("type").notNull(),
   enabled: boolean("enabled").default(true).notNull(),
@@ -100,7 +100,7 @@ export type Integration = typeof integrations.$inferSelect;
 // Agent metrics for monitoring
 export const agentMetrics = pgTable("agent_metrics", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  agentId: varchar("agent_id").notNull(),
+  agentId: varchar("agent_id").notNull().references(() => agents.id, { onDelete: 'cascade' }),
   tasksCompleted: integer("tasks_completed").default(0).notNull(),
   tasksActive: integer("tasks_active").default(0).notNull(),
   successRate: integer("success_rate").default(100).notNull(), // Percentage
@@ -115,3 +115,79 @@ export const insertAgentMetricsSchema = createInsertSchema(agentMetrics).omit({
 
 export type InsertAgentMetrics = z.infer<typeof insertAgentMetricsSchema>;
 export type AgentMetrics = typeof agentMetrics.$inferSelect;
+
+// Activity table for audit logs
+export const activity = pgTable("activity", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id),
+  description: text("description").notNull(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+export const insertActivitySchema = createInsertSchema(activity).omit({
+  id: true,
+  timestamp: true,
+});
+
+export type InsertActivity = z.infer<typeof insertActivitySchema>;
+export type Activity = typeof activity.$inferSelect;
+
+// Relations
+export const organizationsRelations = relations(organizations, ({ many }) => ({
+  agents: many(agents),
+  integrations: many(integrations),
+  activities: many(activity),
+}));
+
+export const agentsRelations = relations(agents, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [agents.organizationId],
+    references: [organizations.id],
+  }),
+  parentAgent: one(agents, {
+    fields: [agents.parentAgentId],
+    references: [agents.id],
+    relationName: "agent_hierarchy",
+  }),
+  subAgents: many(agents, {
+    relationName: "agent_hierarchy",
+  }),
+  tasks: many(tasks),
+  metrics: one(agentMetrics),
+}));
+
+export const tasksRelations = relations(tasks, ({ one, many }) => ({
+  agent: one(agents, {
+    fields: [tasks.agentId],
+    references: [agents.id],
+  }),
+  parentTask: one(tasks, {
+    fields: [tasks.parentTaskId],
+    references: [tasks.id],
+    relationName: "task_hierarchy",
+  }),
+  subTasks: many(tasks, {
+    relationName: "task_hierarchy",
+  }),
+}));
+
+export const integrationsRelations = relations(integrations, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [integrations.organizationId],
+    references: [organizations.id],
+  }),
+}));
+
+export const agentMetricsRelations = relations(agentMetrics, ({ one }) => ({
+  agent: one(agents, {
+    fields: [agentMetrics.agentId],
+    references: [agents.id],
+  }),
+}));
+
+export const activityRelations = relations(activity, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [activity.organizationId],
+    references: [organizations.id],
+  }),
+}));

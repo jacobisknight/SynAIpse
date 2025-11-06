@@ -9,8 +9,17 @@ import {
   type InsertIntegration,
   type AgentMetrics,
   type InsertAgentMetrics,
+  type Activity,
+  type InsertActivity,
+  organizations,
+  agents,
+  tasks,
+  integrations,
+  agentMetrics,
+  activity,
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq, and, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Organizations
@@ -52,247 +61,344 @@ export interface IStorage {
   getRecentActivity(organizationId: string, limit?: number): Promise<any[]>;
 }
 
-export class MemStorage implements IStorage {
-  private organizations: Map<string, Organization>;
-  private agents: Map<string, Agent>;
-  private tasks: Map<string, Task>;
-  private integrations: Map<string, Integration>;
-  private metrics: Map<string, AgentMetrics>;
-  private activity: any[];
-
+export class DatabaseStorage implements IStorage {
   constructor() {
-    this.organizations = new Map();
-    this.agents = new Map();
-    this.tasks = new Map();
-    this.integrations = new Map();
-    this.metrics = new Map();
-    this.activity = [];
-
-    // Initialize demo organization
-    const demoOrg: Organization = {
-      id: "demo-org",
-      name: "Demo Enterprise",
-      createdAt: new Date(),
-    };
-    this.organizations.set(demoOrg.id, demoOrg);
+    this.initDemoOrganization();
   }
 
-  // Organizations
+  private async initDemoOrganization() {
+    try {
+      const existing = await db.select().from(organizations).where(eq(organizations.id, "demo-org")).limit(1);
+      if (existing.length === 0) {
+        await db.insert(organizations).values({
+          id: "demo-org",
+          name: "Demo Enterprise",
+        });
+      }
+    } catch (error) {
+      console.error("Error initializing demo organization:", error);
+    }
+  }
+
+  private async logActivity(orgId: string, description: string): Promise<void> {
+    try {
+      await db.insert(activity).values({
+        organizationId: orgId,
+        description,
+      });
+    } catch (error) {
+      console.error("Error logging activity:", error);
+    }
+  }
+
   async getOrganization(id: string): Promise<Organization | undefined> {
-    return this.organizations.get(id);
+    try {
+      const result = await db.select().from(organizations).where(eq(organizations.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting organization:", error);
+      return undefined;
+    }
   }
 
   async createOrganization(insertOrg: InsertOrganization): Promise<Organization> {
-    const org: Organization = {
-      id: randomUUID(),
-      ...insertOrg,
-      createdAt: new Date(),
-    };
-    this.organizations.set(org.id, org);
-    return org;
+    try {
+      const result = await db.insert(organizations).values(insertOrg).returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error creating organization:", error);
+      throw error;
+    }
   }
 
-  // Agents
   async getAgent(id: string): Promise<Agent | undefined> {
-    return this.agents.get(id);
+    try {
+      const result = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting agent:", error);
+      return undefined;
+    }
   }
 
   async getAgents(organizationId?: string): Promise<Agent[]> {
-    const agents = Array.from(this.agents.values());
-    if (organizationId) {
-      return agents.filter((a) => a.organizationId === organizationId);
+    try {
+      if (organizationId) {
+        return await db.select().from(agents).where(eq(agents.organizationId, organizationId));
+      }
+      return await db.select().from(agents);
+    } catch (error) {
+      console.error("Error getting agents:", error);
+      return [];
     }
-    return agents;
   }
 
   async getAgentsByParentId(parentId: string): Promise<Agent[]> {
-    return Array.from(this.agents.values()).filter((a) => a.parentAgentId === parentId);
+    try {
+      return await db.select().from(agents).where(eq(agents.parentAgentId, parentId));
+    } catch (error) {
+      console.error("Error getting agents by parent ID:", error);
+      return [];
+    }
   }
 
   async createAgent(insertAgent: InsertAgent): Promise<Agent> {
-    const agent: Agent = {
-      id: randomUUID(),
-      ...insertAgent,
-      createdAt: new Date(),
-      lastActiveAt: null,
-    };
-    this.agents.set(agent.id, agent);
+    try {
+      const result = await db.insert(agents).values(insertAgent).returning();
+      const agent = result[0];
 
-    // Log activity
-    this.activity.unshift({
-      description: `Agent "${agent.name}" created`,
-      timestamp: new Date().toISOString(),
-    });
+      await this.logActivity(agent.organizationId, `Agent "${agent.name}" created`);
 
-    return agent;
+      return agent;
+    } catch (error) {
+      console.error("Error creating agent:", error);
+      throw error;
+    }
   }
 
   async updateAgent(id: string, updates: Partial<Agent>): Promise<Agent | undefined> {
-    const agent = this.agents.get(id);
-    if (!agent) return undefined;
+    try {
+      const agent = await this.getAgent(id);
+      if (!agent) return undefined;
 
-    const updated = { ...agent, ...updates, lastActiveAt: new Date() };
-    this.agents.set(id, updated);
+      const updatedData = {
+        ...updates,
+        lastActiveAt: new Date(),
+      };
 
-    // Log activity
-    if (updates.status) {
-      this.activity.unshift({
-        description: `Agent "${agent.name}" status changed to ${updates.status}`,
-        timestamp: new Date().toISOString(),
-      });
+      const result = await db.update(agents).set(updatedData).where(eq(agents.id, id)).returning();
+
+      if (updates.status) {
+        await this.logActivity(agent.organizationId, `Agent "${agent.name}" status changed to ${updates.status}`);
+      }
+
+      return result[0];
+    } catch (error) {
+      console.error("Error updating agent:", error);
+      return undefined;
     }
-
-    return updated;
   }
 
   async deleteAgent(id: string): Promise<void> {
-    const agent = this.agents.get(id);
-    if (agent) {
-      // Delete sub-agents first
-      const subAgents = await this.getAgentsByParentId(id);
-      for (const subAgent of subAgents) {
-        await this.deleteAgent(subAgent.id);
-      }
+    try {
+      const agent = await this.getAgent(id);
+      if (!agent) return;
 
-      this.agents.delete(id);
-      this.activity.unshift({
-        description: `Agent "${agent.name}" deleted`,
-        timestamp: new Date().toISOString(),
-      });
+      await db.delete(agents).where(eq(agents.id, id));
+
+      await this.logActivity(agent.organizationId, `Agent "${agent.name}" deleted`);
+    } catch (error) {
+      console.error("Error deleting agent:", error);
+      throw error;
     }
   }
 
-  // Tasks
   async getTask(id: string): Promise<Task | undefined> {
-    return this.tasks.get(id);
+    try {
+      const result = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting task:", error);
+      return undefined;
+    }
   }
 
   async getTasks(agentId?: string): Promise<Task[]> {
-    const tasks = Array.from(this.tasks.values());
-    if (agentId) {
-      return tasks.filter((t) => t.agentId === agentId);
+    try {
+      if (agentId) {
+        return await db.select().from(tasks).where(eq(tasks.agentId, agentId));
+      }
+      return await db.select().from(tasks);
+    } catch (error) {
+      console.error("Error getting tasks:", error);
+      return [];
     }
-    return tasks;
   }
 
   async createTask(insertTask: InsertTask): Promise<Task> {
-    const task: Task = {
-      id: randomUUID(),
-      ...insertTask,
-      createdAt: new Date(),
-      completedAt: null,
-    };
-    this.tasks.set(task.id, task);
+    try {
+      const result = await db.insert(tasks).values(insertTask).returning();
+      const task = result[0];
 
-    // Log activity
-    this.activity.unshift({
-      description: `Task "${task.title}" created`,
-      timestamp: new Date().toISOString(),
-    });
+      const agent = await this.getAgent(task.agentId);
+      if (agent) {
+        await this.logActivity(agent.organizationId, `Task "${task.title}" created`);
+      }
 
-    return task;
+      return task;
+    } catch (error) {
+      console.error("Error creating task:", error);
+      throw error;
+    }
   }
 
   async updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined> {
-    const task = this.tasks.get(id);
-    if (!task) return undefined;
+    try {
+      const task = await this.getTask(id);
+      if (!task) return undefined;
 
-    const updated = {
-      ...task,
-      ...updates,
-      completedAt: updates.status === "completed" ? new Date() : task.completedAt,
-    };
-    this.tasks.set(id, updated);
+      const updatedData = {
+        ...updates,
+        completedAt: updates.status === "completed" ? new Date() : undefined,
+      };
 
-    return updated;
+      const result = await db.update(tasks).set(updatedData).where(eq(tasks.id, id)).returning();
+      
+      if (updates.status && updates.status !== task.status) {
+        const agent = await this.getAgent(task.agentId);
+        if (agent) {
+          await this.logActivity(agent.organizationId, `Task "${task.title}" status changed to ${updates.status}`);
+        }
+      }
+
+      return result[0];
+    } catch (error) {
+      console.error("Error updating task:", error);
+      return undefined;
+    }
   }
 
-  // Integrations
   async getIntegrations(organizationId?: string): Promise<Integration[]> {
-    const integrations = Array.from(this.integrations.values());
-    if (organizationId) {
-      return integrations.filter((i) => i.organizationId === organizationId);
+    try {
+      if (organizationId) {
+        return await db.select().from(integrations).where(eq(integrations.organizationId, organizationId));
+      }
+      return await db.select().from(integrations);
+    } catch (error) {
+      console.error("Error getting integrations:", error);
+      return [];
     }
-    return integrations;
   }
 
   async createIntegration(insertIntegration: InsertIntegration): Promise<Integration> {
-    const integration: Integration = {
-      id: randomUUID(),
-      ...insertIntegration,
-      createdAt: new Date(),
-    };
-    this.integrations.set(integration.id, integration);
+    try {
+      const result = await db.insert(integrations).values(insertIntegration).returning();
+      const integration = result[0];
 
-    // Log activity
-    this.activity.unshift({
-      description: `Integration "${integration.name}" enabled`,
-      timestamp: new Date().toISOString(),
-    });
+      await this.logActivity(integration.organizationId, `Integration "${integration.name}" enabled`);
 
-    return integration;
+      return integration;
+    } catch (error) {
+      console.error("Error creating integration:", error);
+      throw error;
+    }
   }
 
   async updateIntegration(id: string, updates: Partial<Integration>): Promise<Integration | undefined> {
-    const integration = this.integrations.get(id);
-    if (!integration) return undefined;
+    try {
+      const integration = await db.select().from(integrations).where(eq(integrations.id, id)).limit(1);
+      if (!integration[0]) return undefined;
 
-    const updated = { ...integration, ...updates };
-    this.integrations.set(id, updated);
+      const result = await db.update(integrations).set(updates).where(eq(integrations.id, id)).returning();
+      
+      if (updates.enabled !== undefined && updates.enabled !== integration[0].enabled) {
+        const status = updates.enabled ? 'enabled' : 'disabled';
+        await this.logActivity(integration[0].organizationId, `Integration "${integration[0].name}" ${status}`);
+      } else if (updates.name || updates.type || updates.configuration) {
+        await this.logActivity(integration[0].organizationId, `Integration "${integration[0].name}" updated`);
+      }
 
-    return updated;
+      return result[0];
+    } catch (error) {
+      console.error("Error updating integration:", error);
+      return undefined;
+    }
   }
 
-  // Metrics
   async getAgentMetrics(agentId: string): Promise<AgentMetrics | undefined> {
-    return this.metrics.get(agentId);
+    try {
+      const result = await db.select().from(agentMetrics).where(eq(agentMetrics.agentId, agentId)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting agent metrics:", error);
+      return undefined;
+    }
   }
 
   async updateAgentMetrics(insertMetrics: InsertAgentMetrics): Promise<AgentMetrics> {
-    const existing = this.metrics.get(insertMetrics.agentId);
-    const metrics: AgentMetrics = {
-      id: existing?.id || randomUUID(),
-      ...insertMetrics,
-      lastUpdated: new Date(),
-    };
-    this.metrics.set(insertMetrics.agentId, metrics);
-    return metrics;
+    try {
+      const existing = await this.getAgentMetrics(insertMetrics.agentId);
+
+      if (existing) {
+        const result = await db
+          .update(agentMetrics)
+          .set({ ...insertMetrics, lastUpdated: new Date() })
+          .where(eq(agentMetrics.agentId, insertMetrics.agentId))
+          .returning();
+        return result[0];
+      } else {
+        const result = await db.insert(agentMetrics).values(insertMetrics).returning();
+        return result[0];
+      }
+    } catch (error) {
+      console.error("Error updating agent metrics:", error);
+      throw error;
+    }
   }
 
-  // Stats
   async getStats(organizationId: string): Promise<{
     activeAgents: number;
     tasksCompleted: number;
     successRate: number;
     avgResponseTime: number;
   }> {
-    const agents = await this.getAgents(organizationId);
-    const activeAgents = agents.filter((a) => a.status === "active").length;
+    try {
+      const orgAgents = await this.getAgents(organizationId);
+      const activeAgents = orgAgents.filter((a) => a.status === "active").length;
 
-    const tasks = Array.from(this.tasks.values());
-    const tasksCompleted = tasks.filter((t) => t.status === "completed").length;
+      const agentIds = orgAgents.map((a) => a.id);
+      
+      let tasksCompleted = 0;
+      if (agentIds.length > 0) {
+        const completedTasks = await db
+          .select()
+          .from(tasks)
+          .where(eq(tasks.status, "completed"));
+        tasksCompleted = completedTasks.filter((t) => agentIds.includes(t.agentId)).length;
+      }
 
-    const allMetrics = Array.from(this.metrics.values());
-    const avgSuccessRate = allMetrics.length > 0
-      ? Math.round(allMetrics.reduce((sum, m) => sum + m.successRate, 0) / allMetrics.length)
-      : 100;
+      const allMetrics = await db.select().from(agentMetrics);
+      const orgMetrics = allMetrics.filter((m) => agentIds.includes(m.agentId));
 
-    const avgResponseTime = allMetrics.length > 0
-      ? Math.round(allMetrics.reduce((sum, m) => sum + m.avgResponseTime, 0) / allMetrics.length)
-      : 450;
+      const avgSuccessRate = orgMetrics.length > 0
+        ? Math.round(orgMetrics.reduce((sum, m) => sum + m.successRate, 0) / orgMetrics.length)
+        : 100;
 
-    return {
-      activeAgents,
-      tasksCompleted,
-      successRate: avgSuccessRate,
-      avgResponseTime,
-    };
+      const avgResponseTime = orgMetrics.length > 0
+        ? Math.round(orgMetrics.reduce((sum, m) => sum + m.avgResponseTime, 0) / orgMetrics.length)
+        : 450;
+
+      return {
+        activeAgents,
+        tasksCompleted,
+        successRate: avgSuccessRate,
+        avgResponseTime,
+      };
+    } catch (error) {
+      console.error("Error getting stats:", error);
+      return {
+        activeAgents: 0,
+        tasksCompleted: 0,
+        successRate: 100,
+        avgResponseTime: 450,
+      };
+    }
   }
 
-  // Activity
-  async getRecentActivity(organizationId: string, limit: number = 10): Promise<any[]> {
-    return this.activity.slice(0, limit);
+  async getRecentActivity(organizationId: string, limit: number = 10): Promise<Activity[]> {
+    try {
+      const result = await db
+        .select()
+        .from(activity)
+        .where(eq(activity.organizationId, organizationId))
+        .orderBy(sql`${activity.timestamp} DESC`)
+        .limit(limit);
+      return result;
+    } catch (error) {
+      console.error("Error getting recent activity:", error);
+      return [];
+    }
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
