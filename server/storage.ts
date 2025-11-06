@@ -13,6 +13,8 @@ import {
   type InsertActivity,
   type Workflow,
   type InsertWorkflow,
+  type WorkflowVersion,
+  type InsertWorkflowVersion,
   type Document,
   type InsertDocument,
   type Settings,
@@ -24,6 +26,7 @@ import {
   agentMetrics,
   activity,
   workflows,
+  workflowVersions,
   documents,
   settings,
 } from "@shared/schema";
@@ -77,6 +80,12 @@ export interface IStorage {
   createWorkflow(workflow: InsertWorkflow): Promise<Workflow>;
   updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow | undefined>;
   deleteWorkflow(id: string): Promise<void>;
+  
+  // Workflow Versions
+  getWorkflowVersions(workflowId: string): Promise<WorkflowVersion[]>;
+  createWorkflowVersion(version: InsertWorkflowVersion): Promise<WorkflowVersion>;
+  getWorkflowVersion(id: string): Promise<WorkflowVersion | undefined>;
+  restoreWorkflowVersion(workflowId: string, versionId: string): Promise<Workflow | undefined>;
 
   // Documents
   getDocument(id: string): Promise<Document | undefined>;
@@ -668,6 +677,27 @@ export class DatabaseStorage implements IStorage {
       const workflow = await this.getWorkflow(id);
       if (!workflow) return undefined;
 
+      // Auto-create version if nodes or edges changed
+      if (updates.nodes || updates.edges) {
+        const shouldCreateVersion = 
+          JSON.stringify(updates.nodes || workflow.nodes) !== JSON.stringify(workflow.nodes) ||
+          JSON.stringify(updates.edges || workflow.edges) !== JSON.stringify(workflow.edges);
+        
+        if (shouldCreateVersion && workflow.nodes && workflow.edges) {
+          try {
+            await this.createWorkflowVersion({
+              workflowId: id,
+              nodes: workflow.nodes as any[],
+              edges: workflow.edges as any[],
+              description: "Auto-saved version",
+            });
+          } catch (versionError) {
+            // Don't fail the update if versioning fails
+            console.error("Error creating workflow version:", versionError);
+          }
+        }
+      }
+
       const updatedData = {
         ...updates,
         updatedAt: new Date(),
@@ -697,6 +727,84 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error("Error deleting workflow:", error);
       throw error;
+    }
+  }
+
+  async getWorkflowVersions(workflowId: string): Promise<WorkflowVersion[]> {
+    try {
+      return await db
+        .select()
+        .from(workflowVersions)
+        .where(eq(workflowVersions.workflowId, workflowId))
+        .orderBy(sql`${workflowVersions.version} DESC`);
+    } catch (error) {
+      console.error("Error getting workflow versions:", error);
+      return [];
+    }
+  }
+
+  async createWorkflowVersion(version: InsertWorkflowVersion): Promise<WorkflowVersion> {
+    try {
+      // Get the next version number
+      const existingVersions = await this.getWorkflowVersions(version.workflowId);
+      const nextVersion = existingVersions.length > 0 
+        ? Math.max(...existingVersions.map(v => v.version)) + 1
+        : 1;
+
+      const result = await db
+        .insert(workflowVersions)
+        .values({ ...version, version: nextVersion })
+        .returning();
+      
+      return result[0];
+    } catch (error) {
+      console.error("Error creating workflow version:", error);
+      throw error;
+    }
+  }
+
+  async getWorkflowVersion(id: string): Promise<WorkflowVersion | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(workflowVersions)
+        .where(eq(workflowVersions.id, id))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting workflow version:", error);
+      return undefined;
+    }
+  }
+
+  async restoreWorkflowVersion(workflowId: string, versionId: string): Promise<Workflow | undefined> {
+    try {
+      const version = await this.getWorkflowVersion(versionId);
+      if (!version || version.workflowId !== workflowId) {
+        return undefined;
+      }
+
+      // Create a new version of the current state before restoring
+      const currentWorkflow = await this.getWorkflow(workflowId);
+      if (currentWorkflow) {
+        await this.createWorkflowVersion({
+          workflowId,
+          nodes: currentWorkflow.nodes as any[],
+          edges: currentWorkflow.edges as any[],
+          description: "Auto-saved before restore",
+        });
+      }
+
+      // Restore the version
+      const updated = await this.updateWorkflow(workflowId, {
+        nodes: version.nodes as any,
+        edges: version.edges as any,
+      });
+
+      return updated;
+    } catch (error) {
+      console.error("Error restoring workflow version:", error);
+      return undefined;
     }
   }
 

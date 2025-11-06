@@ -172,6 +172,29 @@ export const workflows = pgTable("workflows", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Workflow versions for version control
+export const workflowVersions = pgTable("workflow_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workflowId: varchar("workflow_id").notNull().references(() => workflows.id, { onDelete: 'cascade' }),
+  version: integer("version").notNull(),
+  nodes: jsonb("nodes").notNull(),
+  edges: jsonb("edges").notNull(),
+  description: text("description"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertWorkflowVersionSchema = createInsertSchema(workflowVersions).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  nodes: z.array(z.any()),
+  edges: z.array(z.any()),
+});
+
+export type InsertWorkflowVersion = z.infer<typeof insertWorkflowVersionSchema>;
+export type WorkflowVersion = typeof workflowVersions.$inferSelect;
+
 export const insertWorkflowSchema = createInsertSchema(workflows).omit({
   id: true,
   createdAt: true,
@@ -297,4 +320,15 @@ export const documentsRelations = relations(documents, ({ one }) => ({
     fields: [documents.organizationId],
     references: [organizations.id],
   }),
+}));
+
+export const workflowsVersionsRelations = relations(workflowVersions, ({ one }) => ({
+  workflow: one(workflows, {
+    fields: [workflowVersions.workflowId],
+    references: [workflows.id],
+  }),
+}));
+
+export const workflowsVersionsRelationsReverse = relations(workflows, ({ many }) => ({
+  versions: many(workflowVersions),
 }));

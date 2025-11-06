@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema, insertWorkflowSchema, insertDocumentSchema } from "@shared/schema";
+import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema, insertWorkflowSchema, insertWorkflowVersionSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
 import { decomposeTask, generateAgentPersona, executeAgentTask } from "./ai-service";
 
@@ -453,6 +453,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         success: true, 
         message: `Workflow "${workflow.name}" execution started`,
+        workflow 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Workflow version endpoints
+  app.get("/api/workflows/:id/versions", async (req, res) => {
+    try {
+      const versions = await storage.getWorkflowVersions(req.params.id);
+      res.json(versions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/versions", async (req, res) => {
+    try {
+      const validated = insertWorkflowVersionSchema.parse({
+        ...req.body,
+        workflowId: req.params.id,
+      });
+      const version = await storage.createWorkflowVersion(validated);
+      res.status(201).json(version);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/versions/:versionId/restore", async (req, res) => {
+    try {
+      const workflow = await storage.restoreWorkflowVersion(req.params.id, req.params.versionId);
+      if (!workflow) {
+        return res.status(404).json({ error: "Workflow or version not found" });
+      }
+      
+      broadcast({ type: "workflow_restored", data: { workflowId: workflow.id } });
+      
+      res.json({ 
+        success: true, 
+        message: "Workflow version restored",
         workflow 
       });
     } catch (error: any) {
