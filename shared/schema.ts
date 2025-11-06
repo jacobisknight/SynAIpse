@@ -18,6 +18,30 @@ export const insertOrganizationSchema = createInsertSchema(organizations).omit({
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type Organization = typeof organizations.$inferSelect;
 
+// Settings table for organization-level configuration
+export const settings = pgTable("settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id).unique(),
+  timezone: text("timezone").default("America/New_York"),
+  defaultPersona: text("default_persona"),
+  defaultGoals: text("default_goals").array(),
+  defaultTriggers: text("default_triggers").array(),
+  preferences: jsonb("preferences"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertSettingsSchema = createInsertSchema(settings).omit({
+  id: true,
+  updatedAt: true,
+}).extend({
+  defaultGoals: z.array(z.string()).optional(),
+  defaultTriggers: z.array(z.string()).optional(),
+  preferences: z.record(z.any()).optional(),
+});
+
+export type InsertSettings = z.infer<typeof insertSettingsSchema>;
+export type Settings = typeof settings.$inferSelect;
+
 // Agent types
 export const agentTypeEnum = z.enum(["voice", "workflow", "data"]);
 export const agentStatusEnum = z.enum(["active", "idle", "processing", "error", "stopped"]);
@@ -188,12 +212,20 @@ export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type Document = typeof documents.$inferSelect;
 
 // Relations
-export const organizationsRelations = relations(organizations, ({ many }) => ({
+export const organizationsRelations = relations(organizations, ({ one, many }) => ({
   agents: many(agents),
   integrations: many(integrations),
   activities: many(activity),
   workflows: many(workflows),
   documents: many(documents),
+  settings: one(settings),
+}));
+
+export const settingsRelations = relations(settings, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [settings.organizationId],
+    references: [organizations.id],
+  }),
 }));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({

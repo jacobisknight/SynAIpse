@@ -15,6 +15,8 @@ import {
   type InsertWorkflow,
   type Document,
   type InsertDocument,
+  type Settings,
+  type InsertSettings,
   organizations,
   agents,
   tasks,
@@ -23,6 +25,7 @@ import {
   activity,
   workflows,
   documents,
+  settings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
@@ -31,6 +34,7 @@ export interface IStorage {
   // Organizations
   getOrganization(id: string): Promise<Organization | undefined>;
   createOrganization(org: InsertOrganization): Promise<Organization>;
+  updateOrganization(id: string, updates: Partial<Organization>): Promise<Organization | undefined>;
 
   // Agents
   getAgent(id: string): Promise<Agent | undefined>;
@@ -80,6 +84,10 @@ export interface IStorage {
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocument(id: string, updates: Partial<Document>): Promise<Document | undefined>;
   deleteDocument(id: string): Promise<void>;
+
+  // Settings
+  getSettings(organizationId: string): Promise<Settings | undefined>;
+  updateSettings(organizationId: string, updates: Partial<Settings>): Promise<Settings>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -301,6 +309,22 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error("Error creating organization:", error);
       throw error;
+    }
+  }
+
+  async updateOrganization(id: string, updates: Partial<Organization>): Promise<Organization | undefined> {
+    try {
+      const org = await this.getOrganization(id);
+      if (!org) return undefined;
+
+      const result = await db.update(organizations).set(updates).where(eq(organizations.id, id)).returning();
+      
+      await this.logActivity(id, `Organization settings updated`);
+
+      return result[0];
+    } catch (error) {
+      console.error("Error updating organization:", error);
+      return undefined;
     }
   }
 
@@ -741,6 +765,40 @@ export class DatabaseStorage implements IStorage {
       await this.logActivity(document.organizationId, `Document "${document.name}" deleted`);
     } catch (error) {
       console.error("Error deleting document:", error);
+      throw error;
+    }
+  }
+
+  async getSettings(organizationId: string): Promise<Settings | undefined> {
+    try {
+      const result = await db.select().from(settings).where(eq(settings.organizationId, organizationId)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting settings:", error);
+      return undefined;
+    }
+  }
+
+  async updateSettings(organizationId: string, updates: Partial<Settings>): Promise<Settings> {
+    try {
+      const existing = await this.getSettings(organizationId);
+      
+      if (existing) {
+        const updatedData = {
+          ...updates,
+          updatedAt: new Date(),
+        };
+        const result = await db.update(settings).set(updatedData).where(eq(settings.organizationId, organizationId)).returning();
+        return result[0];
+      } else {
+        const result = await db.insert(settings).values({
+          organizationId,
+          ...updates,
+        }).returning();
+        return result[0];
+      }
+    } catch (error) {
+      console.error("Error updating settings:", error);
       throw error;
     }
   }

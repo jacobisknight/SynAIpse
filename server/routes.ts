@@ -628,5 +628,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const organizationId = "demo-org";
+      const org = await storage.getOrganization(organizationId);
+      const settings = await storage.getSettings(organizationId);
+      
+      res.json({
+        organization: org,
+        settings: settings || {
+          organizationId,
+          timezone: "America/New_York",
+          defaultPersona: null,
+          defaultGoals: [],
+          defaultTriggers: [],
+          preferences: {},
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/settings", async (req, res) => {
+    try {
+      const organizationId = "demo-org";
+      const settings = await storage.updateSettings(organizationId, req.body);
+      
+      res.json(settings);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/organization/:id", async (req, res) => {
+    try {
+      const organization = await storage.updateOrganization(req.params.id, req.body);
+      if (!organization) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+      
+      res.json(organization);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/system/status", async (req, res) => {
+    try {
+      const organizationId = "demo-org";
+      const agents = await storage.getAgents(organizationId);
+      const tasks = await storage.getTasks();
+      const documents = await storage.getDocuments(organizationId);
+      const workflows = await storage.getWorkflows(organizationId);
+      const integrations = await storage.getIntegrations(organizationId);
+      
+      const stats = await storage.getStats(organizationId);
+      
+      const totalStorageSize = documents.reduce((sum, doc) => sum + doc.fileSize, 0);
+      
+      const apiKeysConfigured = {
+        openai: !!process.env.OPENAI_API_KEY,
+        elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+      };
+      
+      res.json({
+        database: {
+          status: "connected",
+          type: "PostgreSQL",
+        },
+        counts: {
+          agents: agents.length,
+          tasks: tasks.length,
+          documents: documents.length,
+          workflows: workflows.length,
+          integrations: integrations.filter(i => i.enabled).length,
+        },
+        storage: {
+          totalBytes: totalStorageSize,
+          totalMB: (totalStorageSize / (1024 * 1024)).toFixed(2),
+        },
+        performance: stats,
+        apiKeys: apiKeysConfigured,
+        version: "1.0.0",
+        buildDate: new Date().toISOString().split('T')[0],
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
