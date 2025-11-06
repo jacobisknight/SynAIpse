@@ -160,12 +160,40 @@ export const insertWorkflowSchema = createInsertSchema(workflows).omit({
 export type InsertWorkflow = z.infer<typeof insertWorkflowSchema>;
 export type Workflow = typeof workflows.$inferSelect;
 
+// Documents for RAG
+export const documentStatusEnum = z.enum(["processing", "ready", "error"]);
+
+export const documents = pgTable("documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull().references(() => organizations.id),
+  name: text("name").notNull(),
+  content: text("content"),
+  fileType: text("file_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  status: text("status").notNull().default("ready"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertDocumentSchema = createInsertSchema(documents).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  metadata: z.record(z.any()).optional(),
+});
+
+export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type Document = typeof documents.$inferSelect;
+
 // Relations
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   agents: many(agents),
   integrations: many(integrations),
   activities: many(activity),
   workflows: many(workflows),
+  documents: many(documents),
 }));
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
@@ -229,5 +257,12 @@ export const workflowsRelations = relations(workflows, ({ one }) => ({
   agent: one(agents, {
     fields: [workflows.agentId],
     references: [agents.id],
+  }),
+}));
+
+export const documentsRelations = relations(documents, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [documents.organizationId],
+    references: [organizations.id],
   }),
 }));

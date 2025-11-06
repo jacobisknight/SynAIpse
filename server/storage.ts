@@ -13,6 +13,8 @@ import {
   type InsertActivity,
   type Workflow,
   type InsertWorkflow,
+  type Document,
+  type InsertDocument,
   organizations,
   agents,
   tasks,
@@ -20,6 +22,7 @@ import {
   agentMetrics,
   activity,
   workflows,
+  documents,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
@@ -70,6 +73,13 @@ export interface IStorage {
   createWorkflow(workflow: InsertWorkflow): Promise<Workflow>;
   updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow | undefined>;
   deleteWorkflow(id: string): Promise<void>;
+
+  // Documents
+  getDocument(id: string): Promise<Document | undefined>;
+  getDocuments(organizationId?: string): Promise<Document[]>;
+  createDocument(document: InsertDocument): Promise<Document>;
+  updateDocument(id: string, updates: Partial<Document>): Promise<Document | undefined>;
+  deleteDocument(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -662,6 +672,75 @@ export class DatabaseStorage implements IStorage {
       await this.logActivity(workflow.organizationId, `Workflow "${workflow.name}" deleted`);
     } catch (error) {
       console.error("Error deleting workflow:", error);
+      throw error;
+    }
+  }
+
+  async getDocument(id: string): Promise<Document | undefined> {
+    try {
+      const result = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting document:", error);
+      return undefined;
+    }
+  }
+
+  async getDocuments(organizationId?: string): Promise<Document[]> {
+    try {
+      if (organizationId) {
+        return await db.select().from(documents).where(eq(documents.organizationId, organizationId));
+      }
+      return await db.select().from(documents);
+    } catch (error) {
+      console.error("Error getting documents:", error);
+      return [];
+    }
+  }
+
+  async createDocument(insertDocument: InsertDocument): Promise<Document> {
+    try {
+      const result = await db.insert(documents).values(insertDocument).returning();
+      const document = result[0];
+
+      await this.logActivity(document.organizationId, `Document "${document.name}" uploaded`);
+
+      return document;
+    } catch (error) {
+      console.error("Error creating document:", error);
+      throw error;
+    }
+  }
+
+  async updateDocument(id: string, updates: Partial<Document>): Promise<Document | undefined> {
+    try {
+      const document = await this.getDocument(id);
+      if (!document) return undefined;
+
+      const updatedData = {
+        ...updates,
+        updatedAt: new Date(),
+      };
+
+      const result = await db.update(documents).set(updatedData).where(eq(documents.id, id)).returning();
+
+      return result[0];
+    } catch (error) {
+      console.error("Error updating document:", error);
+      return undefined;
+    }
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    try {
+      const document = await this.getDocument(id);
+      if (!document) return;
+
+      await db.delete(documents).where(eq(documents.id, id));
+
+      await this.logActivity(document.organizationId, `Document "${document.name}" deleted`);
+    } catch (error) {
+      console.error("Error deleting document:", error);
       throw error;
     }
   }

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema, insertWorkflowSchema } from "@shared/schema";
+import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema, insertWorkflowSchema, insertDocumentSchema } from "@shared/schema";
 import { z } from "zod";
 import { decomposeTask, generateAgentPersona, executeAgentTask } from "./ai-service";
 
@@ -454,6 +454,174 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true, 
         message: `Workflow "${workflow.name}" execution started`,
         workflow 
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Document endpoints
+  app.get("/api/documents", async (req, res) => {
+    try {
+      const documents = await storage.getDocuments("demo-org");
+      res.json(documents);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/documents/:id", async (req, res) => {
+    try {
+      const document = await storage.getDocument(req.params.id);
+      if (!document) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      res.json(document);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents", async (req, res) => {
+    try {
+      const { name, content, fileType, fileSize, metadata } = req.body;
+
+      if (!name || !content || !fileType || fileSize === undefined) {
+        return res.status(400).json({ error: "Missing required fields: name, content, fileType, fileSize" });
+      }
+
+      const validated = insertDocumentSchema.parse({
+        organizationId: "demo-org",
+        name,
+        content,
+        fileType,
+        fileSize,
+        status: "ready",
+        metadata: metadata || {},
+      });
+
+      const document = await storage.createDocument(validated);
+      
+      broadcast({ type: "document_created", data: document });
+      
+      res.status(201).json(document);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/documents/:id", async (req, res) => {
+    try {
+      const document = await storage.updateDocument(req.params.id, req.body);
+      if (!document) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      
+      broadcast({ type: "document_updated", data: document });
+      
+      res.json(document);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/documents/:id", async (req, res) => {
+    try {
+      await storage.deleteDocument(req.params.id);
+      
+      broadcast({ type: "document_deleted", data: { id: req.params.id } });
+      
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/search", async (req, res) => {
+    try {
+      const { query } = req.body;
+      
+      if (!query) {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      const document = await storage.getDocument(req.params.id);
+      if (!document) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      const searchQuery = query.toLowerCase();
+      const content = document.content?.toLowerCase() || "";
+      
+      const matches = [];
+      const lines = content.split('\n');
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(searchQuery)) {
+          matches.push({
+            lineNumber: i + 1,
+            content: lines[i].trim(),
+            preview: lines[i].trim().substring(0, 150),
+          });
+        }
+      }
+
+      res.json({
+        documentId: document.id,
+        documentName: document.name,
+        query,
+        matchCount: matches.length,
+        matches: matches.slice(0, 50),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/search-all", async (req, res) => {
+    try {
+      const { query } = req.body;
+      
+      if (!query || query.trim() === "") {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      const documents = await storage.getDocuments("demo-org");
+      const searchQuery = query.toLowerCase();
+      
+      const results = [];
+      
+      for (const document of documents) {
+        const content = document.content?.toLowerCase() || "";
+        const originalContent = document.content || "";
+        const lines = originalContent.split('\n');
+        const matches = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].toLowerCase().includes(searchQuery)) {
+            matches.push({
+              lineNumber: i + 1,
+              text: lines[i].trim(),
+            });
+          }
+        }
+        
+        if (matches.length > 0) {
+          results.push({
+            documentId: document.id,
+            documentName: document.name,
+            fileType: document.fileType,
+            matchCount: matches.length,
+            matches: matches.slice(0, 50),
+          });
+        }
+      }
+
+      res.json({
+        query,
+        totalDocuments: documents.length,
+        documentsWithMatches: results.length,
+        results,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
