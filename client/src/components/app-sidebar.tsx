@@ -1,4 +1,4 @@
-import { ChevronUp, LayoutDashboard, Cpu, ArrowsRightLeft, Database, Settings, Plug } from "lucide-react";
+import { ChevronUp, LayoutDashboard, Cpu, ArrowsRightLeft, Database, Settings, Plug, Package, Shield, BarChart3 } from "lucide-react";
 import { useLocation } from "wouter";
 import {
   Sidebar,
@@ -44,6 +44,21 @@ const menuItems = [
     title: "Integrations",
     url: "/integrations",
     icon: Plug,
+  },
+  {
+    title: "Analytics",
+    url: "/analytics",
+    icon: BarChart3,
+  },
+  {
+    title: "Marketplace",
+    url: "/marketplace",
+    icon: Package,
+  },
+  {
+    title: "Compliance",
+    url: "/compliance",
+    icon: Shield,
   },
   {
     title: "Settings",
