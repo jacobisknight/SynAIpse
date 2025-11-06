@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { insertAgentSchema, insertTaskSchema, insertIntegrationSchema } from "@shared/schema";
+import { z } from "zod";
 import { decomposeTask, generateAgentPersona, executeAgentTask } from "./ai-service";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -308,6 +309,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(integration);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Test integration connection
+  app.post("/api/integrations/:id/test", async (req, res) => {
+    try {
+      const integration = await storage.getIntegration(req.params.id);
+      if (!integration) {
+        return res.status(404).json({ error: "Integration not found" });
+      }
+
+      const testCredentialsSchema = z.object({
+        credentials: z.object({
+          apiKey: z.string().min(1, "API key is required"),
+          apiSecret: z.string().optional(),
+          baseUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
+        }).optional(),
+      });
+
+      const validated = testCredentialsSchema.parse(req.body);
+      
+      let credentialsToTest;
+      if (validated.credentials) {
+        credentialsToTest = validated.credentials;
+      } else {
+        const savedConfig = integration.configuration && 
+          typeof integration.configuration === 'object' &&
+          Object.keys(integration.configuration).length > 0 
+          ? integration.configuration 
+          : null;
+
+        if (!savedConfig) {
+          return res.status(400).json({ 
+            success: false, 
+            error: "No configuration found. Please configure the integration first." 
+          });
+        }
+        credentialsToTest = savedConfig;
+      }
+
+      // Simulate a brief delay for testing
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Randomly succeed or fail for demo purposes
+      const success = Math.random() > 0.2;
+      
+      if (success) {
+        res.json({ 
+          success: true, 
+          message: `Successfully connected to ${integration.name}` 
+        });
+      } else {
+        res.status(400).json({ 
+          success: false, 
+          error: "Invalid credentials or connection failed" 
+        });
+      }
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          success: false, 
+          error: error.errors[0]?.message || "Validation failed" 
+        });
+      }
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 

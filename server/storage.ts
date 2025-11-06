@@ -41,6 +41,7 @@ export interface IStorage {
   updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined>;
 
   // Integrations
+  getIntegration(id: string): Promise<Integration | undefined>;
   getIntegrations(organizationId?: string): Promise<Integration[]>;
   createIntegration(integration: InsertIntegration): Promise<Integration>;
   updateIntegration(id: string, updates: Partial<Integration>): Promise<Integration | undefined>;
@@ -64,6 +65,7 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   constructor() {
     this.initDemoOrganization();
+    this.initDemoIntegrations();
   }
 
   private async initDemoOrganization() {
@@ -77,6 +79,56 @@ export class DatabaseStorage implements IStorage {
       }
     } catch (error) {
       console.error("Error initializing demo organization:", error);
+    }
+  }
+
+  private async initDemoIntegrations() {
+    try {
+      const existing = await db.select().from(integrations).where(eq(integrations.organizationId, "demo-org")).limit(1);
+      if (existing.length === 0) {
+        const demoIntegrations = [
+          {
+            organizationId: "demo-org",
+            name: "Salesforce",
+            type: "salesforce",
+            enabled: false,
+          },
+          {
+            organizationId: "demo-org",
+            name: "SAP",
+            type: "sap",
+            enabled: false,
+          },
+          {
+            organizationId: "demo-org",
+            name: "ServiceNow",
+            type: "servicenow",
+            enabled: false,
+          },
+          {
+            organizationId: "demo-org",
+            name: "Slack",
+            type: "slack",
+            enabled: false,
+          },
+          {
+            organizationId: "demo-org",
+            name: "Microsoft Teams",
+            type: "teams",
+            enabled: false,
+          },
+          {
+            organizationId: "demo-org",
+            name: "HubSpot",
+            type: "hubspot",
+            enabled: false,
+          },
+        ];
+
+        await db.insert(integrations).values(demoIntegrations);
+      }
+    } catch (error) {
+      console.error("Error initializing demo integrations:", error);
     }
   }
 
@@ -254,6 +306,16 @@ export class DatabaseStorage implements IStorage {
       return result[0];
     } catch (error) {
       console.error("Error updating task:", error);
+      return undefined;
+    }
+  }
+
+  async getIntegration(id: string): Promise<Integration | undefined> {
+    try {
+      const result = await db.select().from(integrations).where(eq(integrations.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting integration:", error);
       return undefined;
     }
   }
