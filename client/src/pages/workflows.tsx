@@ -26,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
@@ -39,23 +40,33 @@ import {
   Circle, 
   ArrowRight,
   FileText,
-  List
+  List,
+  TestTube,
+  History,
+  Settings2
 } from "lucide-react";
 import type { Workflow } from "@shared/schema";
+import { nodeTypes as customNodeTypes, nodePalette, CustomNode } from "@/components/workflow-nodes";
 
 const nodeColorMap: Record<string, string> = {
   start: "#22c55e",
   action: "#3b82f6",
   decision: "#eab308",
   end: "#ef4444",
+  'input-voice': '#10b981',
+  'input-text': '#10b981',
+  'input-api': '#10b981',
+  'process-llm': '#3b82f6',
+  'process-rag': '#3b82f6',
+  'process-code': '#3b82f6',
+  'output-speech': '#8b5cf6',
+  'output-action': '#8b5cf6',
+  'logic-condition': '#eab308',
+  'logic-timer': '#eab308',
+  'logic-threshold': '#eab308',
+  'control-start': '#22c55e',
+  'control-end': '#ef4444',
 };
-
-const nodeTypes = [
-  { type: "start", label: "Start", icon: CircleDot, color: "#22c55e" },
-  { type: "action", label: "Action", icon: Square, color: "#3b82f6" },
-  { type: "decision", label: "Decision", icon: Diamond, color: "#eab308" },
-  { type: "end", label: "End", icon: Circle, color: "#ef4444" },
-];
 
 function WorkflowBuilder({ 
   workflow, 
@@ -81,6 +92,9 @@ function WorkflowBuilder({
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [isTestMode, setIsTestMode] = useState(false);
+  const [testResults, setTestResults] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState('canvas');
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -105,19 +119,16 @@ function WorkflowBuilder({
         y: event.clientY - bounds.top,
       });
 
+      const nodeInfo = nodePalette.find(n => n.type === type);
       const newNode: Node = {
         id: `${type}-${Date.now()}`,
-        type: "default",
+        type: "custom",
         position,
-        data: { label: type.charAt(0).toUpperCase() + type.slice(1), nodeType: type },
-        style: {
-          backgroundColor: nodeColorMap[type] || "#3b82f6",
-          color: "white",
-          border: "2px solid white",
-          borderRadius: "8px",
-          padding: "10px",
-          minWidth: "120px",
-          textAlign: "center",
+        data: { 
+          label: nodeInfo?.label || type.charAt(0).toUpperCase() + type.slice(1), 
+          nodeType: type,
+          description: nodeInfo?.description || '',
+          status: 'idle' 
         },
       };
 
@@ -145,20 +156,54 @@ function WorkflowBuilder({
   useEffect(() => {
     const loadedNodes = Array.isArray(workflow.nodes) ? workflow.nodes.map((node: any) => ({
       ...node,
-      style: {
-        backgroundColor: nodeColorMap[node.data?.nodeType] || nodeColorMap[node.type] || "#3b82f6",
-        color: "white",
-        border: "2px solid white",
-        borderRadius: "8px",
-        padding: "10px",
-        minWidth: "120px",
-        textAlign: "center",
+      type: node.type || 'custom',
+      data: {
+        ...node.data,
+        status: node.data?.status || 'idle',
       },
     })) : [];
     const loadedEdges = Array.isArray(workflow.edges) ? workflow.edges : [];
     setNodes(loadedNodes);
     setEdges(loadedEdges);
   }, [workflow.id]);
+
+  const handleTestRun = async () => {
+    setIsTestMode(true);
+    setTestResults([]);
+    
+    // Simulate workflow execution
+    const results: any[] = [];
+    const startNodes = nodes.filter(n => n.data.nodeType?.includes('start'));
+    
+    for (const startNode of startNodes) {
+      results.push({ nodeId: startNode.id, status: 'running', timestamp: new Date() });
+      
+      // Update node status visually
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === startNode.id
+            ? { ...node, data: { ...node.data, status: 'running' } }
+            : node
+        )
+      );
+      
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === startNode.id
+            ? { ...node, data: { ...node.data, status: 'success' } }
+            : node
+        )
+      );
+      
+      results.push({ nodeId: startNode.id, status: 'success', timestamp: new Date() });
+    }
+    
+    setTestResults(results);
+    setIsTestMode(false);
+  };
 
   return (
     <div className="flex-1 flex flex-col h-screen">
@@ -183,6 +228,9 @@ function WorkflowBuilder({
           <Badge variant="outline" className="capitalize">
             {workflow.status}
           </Badge>
+          <Badge variant="secondary">
+            v{workflow.version || 1}
+          </Badge>
           <Button
             variant="outline"
             size="sm"
@@ -192,6 +240,16 @@ function WorkflowBuilder({
           >
             <Save className="h-4 w-4 mr-2" />
             Save
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleTestRun}
+            disabled={isTestMode}
+            data-testid="button-test-workflow"
+          >
+            <TestTube className="h-4 w-4 mr-2" />
+            Test Run
           </Button>
           <Button
             variant="outline"
@@ -217,41 +275,142 @@ function WorkflowBuilder({
       </div>
 
       <div className="flex-1 flex">
-        <div className="w-64 border-r p-4 space-y-4" data-testid="panel-node-palette">
-          <div>
-            <h3 className="text-sm font-semibold mb-3">Node Palette</h3>
-            <div className="space-y-2">
-              {nodeTypes.map((nodeType) => (
-                <div
-                  key={nodeType.type}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("application/reactflow", nodeType.type);
-                    event.dataTransfer.effectAllowed = "move";
-                  }}
-                  className="flex items-center gap-3 p-3 border rounded-md hover-elevate cursor-move"
-                  data-testid={`node-palette-${nodeType.type}`}
-                >
-                  <div 
-                    className="w-8 h-8 rounded flex items-center justify-center text-white"
-                    style={{ backgroundColor: nodeType.color }}
-                  >
-                    <nodeType.icon className="h-4 w-4" />
-                  </div>
-                  <span className="text-sm font-medium">{nodeType.label}</span>
+        <div className="w-64 border-r p-4 space-y-4 overflow-y-auto" data-testid="panel-node-palette">
+          <Tabs defaultValue="nodes" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="nodes">Nodes</TabsTrigger>
+              <TabsTrigger value="info">Info</TabsTrigger>
+            </TabsList>
+            <TabsContent value="nodes" className="space-y-3 mt-3">
+              <div>
+                <p className="text-xs font-semibold mb-2 text-muted-foreground">INPUT NODES</p>
+                <div className="space-y-2">
+                  {nodePalette.filter(n => n.type.startsWith('input-')).map((nodeType) => (
+                    <div
+                      key={nodeType.type}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("application/reactflow", nodeType.type);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="p-2 border rounded-md hover-elevate cursor-move"
+                      data-testid={`node-palette-${nodeType.type}`}
+                    >
+                      <div className="font-medium text-sm">{nodeType.label}</div>
+                      <div className="text-xs text-muted-foreground">{nodeType.description}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
 
-          <Separator />
+              <div>
+                <p className="text-xs font-semibold mb-2 text-muted-foreground">PROCESS NODES</p>
+                <div className="space-y-2">
+                  {nodePalette.filter(n => n.type.startsWith('process-')).map((nodeType) => (
+                    <div
+                      key={nodeType.type}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("application/reactflow", nodeType.type);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="p-2 border rounded-md hover-elevate cursor-move"
+                      data-testid={`node-palette-${nodeType.type}`}
+                    >
+                      <div className="font-medium text-sm">{nodeType.label}</div>
+                      <div className="text-xs text-muted-foreground">{nodeType.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-          <div>
-            <h3 className="text-sm font-semibold mb-3">Instructions</h3>
-            <p className="text-xs text-muted-foreground">
-              Drag nodes from the palette onto the canvas. Click and drag from the edge of a node to connect it to another node.
-            </p>
-          </div>
+              <div>
+                <p className="text-xs font-semibold mb-2 text-muted-foreground">OUTPUT NODES</p>
+                <div className="space-y-2">
+                  {nodePalette.filter(n => n.type.startsWith('output-')).map((nodeType) => (
+                    <div
+                      key={nodeType.type}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("application/reactflow", nodeType.type);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="p-2 border rounded-md hover-elevate cursor-move"
+                      data-testid={`node-palette-${nodeType.type}`}
+                    >
+                      <div className="font-medium text-sm">{nodeType.label}</div>
+                      <div className="text-xs text-muted-foreground">{nodeType.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold mb-2 text-muted-foreground">LOGIC NODES</p>
+                <div className="space-y-2">
+                  {nodePalette.filter(n => n.type.startsWith('logic-')).map((nodeType) => (
+                    <div
+                      key={nodeType.type}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("application/reactflow", nodeType.type);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="p-2 border rounded-md hover-elevate cursor-move"
+                      data-testid={`node-palette-${nodeType.type}`}
+                    >
+                      <div className="font-medium text-sm">{nodeType.label}</div>
+                      <div className="text-xs text-muted-foreground">{nodeType.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold mb-2 text-muted-foreground">CONTROL NODES</p>
+                <div className="space-y-2">
+                  {nodePalette.filter(n => n.type.startsWith('control-')).map((nodeType) => (
+                    <div
+                      key={nodeType.type}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("application/reactflow", nodeType.type);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="p-2 border rounded-md hover-elevate cursor-move"
+                      data-testid={`node-palette-${nodeType.type}`}
+                    >
+                      <div className="font-medium text-sm">{nodeType.label}</div>
+                      <div className="text-xs text-muted-foreground">{nodeType.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="info" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">Instructions</h4>
+                <p className="text-xs text-muted-foreground">
+                  Drag nodes from the palette onto the canvas. Click and drag from the edge of a node to connect it to another node.
+                </p>
+              </div>
+              {testResults.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Test Results</h4>
+                  <ScrollArea className="h-48 border rounded p-2">
+                    {testResults.map((result, idx) => (
+                      <div key={idx} className="text-xs mb-1">
+                        <Badge variant={result.status === 'success' ? 'default' : 'secondary'} className="mr-2">
+                          {result.status}
+                        </Badge>
+                        Node: {result.nodeId}
+                      </div>
+                    ))}
+                  </ScrollArea>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
 
         <div className="flex-1 relative" ref={reactFlowWrapper} data-testid="canvas-workflow">
@@ -264,12 +423,18 @@ function WorkflowBuilder({
             onDrop={onDrop}
             onDragOver={onDragOver}
             onNodeClick={onNodeClick}
+            nodeTypes={customNodeTypes}
             fitView
           >
             <Panel position="top-right" className="bg-background border rounded-md p-2">
               <div className="flex items-center gap-2">
                 <Badge variant="secondary">{nodes.length} nodes</Badge>
                 <Badge variant="secondary">{edges.length} connections</Badge>
+                {isTestMode && (
+                  <Badge variant="default" className="animate-pulse">
+                    Testing...
+                  </Badge>
+                )}
               </div>
             </Panel>
             <Controls />

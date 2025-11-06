@@ -14,6 +14,8 @@ import Workflows from "@/pages/workflows";
 import DataSources from "@/pages/data";
 import Integrations from "@/pages/integrations";
 import Settings from "@/pages/settings";
+import Marketplace from "@/pages/marketplace";
+import Compliance from "@/pages/compliance";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -24,6 +26,8 @@ function Router() {
       <Route path="/workflows" component={Workflows} />
       <Route path="/data" component={DataSources} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/marketplace" component={Marketplace} />
+      <Route path="/compliance" component={Compliance} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
